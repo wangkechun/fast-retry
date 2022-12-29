@@ -1,4 +1,3 @@
-// nolint
 package fast_retry
 
 import (
@@ -18,7 +17,8 @@ func TestRetryNormal(t *testing.T) {
 	// 如果正确，应该只发起一次请求
 	ctx := context.Background()
 	var n atomic.Int32
-	_, err := BackupRetry(ctx, Option{}, func() (resp interface{}, err error) {
+	r := New(Config{})
+	_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
 		n.Inc()
 		return "hello", nil
 	})
@@ -30,7 +30,8 @@ func TestRetryAllFailed(t *testing.T) {
 	// 如果请求可以全部失败，那么也能快速返回
 	ctx := context.Background()
 	var n atomic.Int32
-	_, err := BackupRetry(ctx, Option{}, func() (resp interface{}, err error) {
+	r := New(Config{})
+	_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
 		n.Inc()
 		return nil, errors.New("xx")
 	})
@@ -42,7 +43,8 @@ func TestRetryCancelBug(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var n atomic.Int32
-	_, err := BackupRetry(ctx, Option{}, func() (resp interface{}, err error) {
+	r := New(Config{})
+	_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
 		n.Inc()
 		return "hello", nil
 	})
@@ -57,7 +59,8 @@ func TestRetryCancelBug2(t *testing.T) {
 		time.Sleep(time.Second / 100)
 		cancel()
 	}()
-	_, err := BackupRetry(ctx, Option{}, func() (resp interface{}, err error) {
+	r := New(Config{})
+	_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
 		time.Sleep(time.Second * 10)
 		return "hello", nil
 	})
@@ -66,10 +69,14 @@ func TestRetryCancelBug2(t *testing.T) {
 }
 
 func TestRetryBench(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
 	l := sync.Mutex{}
 	lines := make([]Line, 0)
 	ctx := context.Background()
 	g, ctx := errgroup.WithContext(ctx)
+	r := New(Config{})
 	for i := 0; i < 100000; i++ {
 		fn := func() (resp interface{}, err error) {
 			if rand.Float64() < 0.99 {
@@ -90,7 +97,7 @@ func TestRetryBench(t *testing.T) {
 		}
 		g.Go(func() error {
 			start := time.Now()
-			_, err := BackupRetry(ctx, Option{}, fn)
+			_, err := r.BackupRetry(ctx, fn)
 			useTime := time.Since(start)
 			l.Lock()
 			lines = append(lines, Line{Type: "retry", UseTime: useTime.Seconds(), Err: err != nil})
