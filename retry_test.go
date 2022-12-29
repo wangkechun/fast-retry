@@ -192,30 +192,37 @@ func BenchmarkRetry(b *testing.B) {
 	ctx := context.Background()
 	r := New(Config{MaxRetryRate: 0.1, FastRetryTime: time.Second / 100})
 	for i := 0; i < b.N; i++ {
-		r.BackupRetry(ctx, func() (resp interface{}, err error) {
+		_, _ = r.BackupRetry(ctx, func() (resp interface{}, err error) {
 			return "ok", nil
 		})
 	}
 }
 
 func TestMemLeakSimple(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
 	str := strings.Repeat("1234567890", 1024) // 10kb
 	ctx := context.Background()
 	r := New(Config{MaxRetryRate: 0.1, FastRetryTime: time.Second / 100})
+	g := sync.WaitGroup{}
 	for i := 0; i < 100000; i++ {
+		g.Add(1)
 		go func() {
-			r.BackupRetry(ctx, func() (resp interface{}, err error) {
+			_, _ = r.BackupRetry(ctx, func() (resp interface{}, err error) {
 				time.Sleep(time.Second / 10)
 				if rand.Float64() < 0.1 {
 					return nil, errors.New("ok")
 				}
 				return str + "a", nil
 			})
+			g.Done()
 		}()
 		if i%100 == 0 {
 			t.Logf("i:%v", i)
 		}
 	}
+	g.Wait()
 	time.Sleep(time.Second)
 	t.Logf("go:%v", runtime.NumGoroutine())
 	require.True(t, runtime.NumGoroutine() < 5)
@@ -245,7 +252,7 @@ func TestMemLeakFull(t *testing.T) {
 	for i := 0; i < 100000; i++ {
 		// m[i] = "ok"
 		go func() {
-			r.BackupRetry(ctx, func() (resp interface{}, err error) {
+			_, _ = r.BackupRetry(ctx, func() (resp interface{}, err error) {
 				time.Sleep(time.Second)
 				if rand.Float64() < 0.1 {
 					return nil, errors.New("ok")
@@ -258,4 +265,10 @@ func TestMemLeakFull(t *testing.T) {
 		}
 	}
 	time.Sleep(time.Hour)
+}
+
+type Line struct {
+	Type    string
+	UseTime float64
+	Err     bool
 }
