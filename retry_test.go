@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -69,9 +70,7 @@ func TestRetryCancelBug2(t *testing.T) {
 }
 
 func TestRetryBench(t *testing.T) {
-	if testing.Short() {
-		t.Skip()
-	}
+	t.Skip("用于人工看优化效果")
 	l := sync.Mutex{}
 	lines := make([]Line, 0)
 	ctx := context.Background()
@@ -181,4 +180,32 @@ func TestMaxRetryRate(t *testing.T) {
 	t.Logf("%v %v %v", callbackCnt.Load(), errorCnt.Load(), successCnt.Load())
 	require.Equal(t, errorCnt.Load(), int64(0))
 	require.True(t, callbackCnt.Load() < int64(float64(successCnt.Load())*1.2))
+}
+
+func BenchmarkRetry(b *testing.B) {
+	ctx := context.Background()
+	r := New(Config{MaxRetryRate: 0.1, FastRetryTime: time.Second / 100})
+	for i := 0; i < b.N; i++ {
+		r.BackupRetry(ctx, func() (resp interface{}, err error) {
+			return "ok", nil
+		})
+	}
+}
+
+func TestMemLeak(t *testing.T) {
+	if os.Getenv("TEST_LEAK") == "" {
+		t.Skip()
+	}
+	// TEST_LEAK=1 GODEBUG=gctrace=1 go test -run TestMemLeak
+	// 内存泄露测试，如果允许内存一直不变，则代表无内存泄露
+	// 如果把 m[i] = "ok" 注释回来，则可以模拟泄露的情况
+	ctx := context.Background()
+	r := New(Config{MaxRetryRate: 0.1, FastRetryTime: time.Second / 100})
+	// m := map[int]string{}
+	for i := 0; ; i++ {
+		// m[i] = "ok"
+		r.BackupRetry(ctx, func() (resp interface{}, err error) {
+			return "ok", nil
+		})
+	}
 }
