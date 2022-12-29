@@ -147,3 +147,38 @@ func TestRetryBench(t *testing.T) {
 	}
 	t.Log("normalErr", normalErr, "retryErr", retryErr, "normalSlow", normalSlow, "retrySlow", retrySlow)
 }
+
+func TestMaxRetryRate(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	ctx := context.Background()
+	g, ctx := errgroup.WithContext(ctx)
+	var callbackCnt atomic.Int64
+	var errorCnt atomic.Int64
+	var successCnt atomic.Int64
+	// 模拟 FastRetryTime 设置不当，看请求是否放大两次
+	r := New(Config{MaxRetryRate: 0.1, FastRetryTime: time.Second / 15})
+	fn := func() (resp interface{}, err error) {
+		callbackCnt.Inc()
+		time.Sleep(time.Second / 10)
+		return "ok", nil
+	}
+	for i := 0; i < 100; i++ {
+		g.Go(func() error {
+			for j := 0; j < 100; j++ {
+				_, err := r.BackupRetry(ctx, fn)
+				if err != nil {
+					errorCnt.Inc()
+				} else {
+					successCnt.Inc()
+				}
+			}
+			return nil
+		})
+	}
+	_ = g.Wait()
+	t.Logf("%v %v %v", callbackCnt.Load(), errorCnt.Load(), successCnt.Load())
+	require.Equal(t, errorCnt.Load(), int64(0))
+	require.True(t, callbackCnt.Load() < int64(float64(successCnt.Load())*1.2))
+}

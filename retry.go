@@ -2,10 +2,10 @@ package fast_retry
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/facebookgo/clock"
-	"go.uber.org/atomic"
 )
 
 type Clock interface {
@@ -28,9 +28,8 @@ type Config struct {
 
 type Retry struct {
 	*Config
-	successCnt atomic.Int64
-	retryCnt   atomic.Int64
-	errorCnt   atomic.Int64
+	score         atomic.Int64
+	oneRetryScore int64
 }
 
 func New(config Config) *Retry {
@@ -50,12 +49,20 @@ func New(config Config) *Retry {
 	if r.Clock == nil {
 		r.Clock = clock.New()
 	}
+	if r.MaxRetryRate == 0 {
+		r.MaxRetryRate = 0.05
+	}
+	if r.MaxRetryRate <= 0 || r.MaxRetryRate >= 1 {
+		panic("bad MaxRetryRate")
+	}
+	r.oneRetryScore = int64(1 / r.MaxRetryRate)
 	return r
 }
 
 func (r *Retry) BackupRetry(ctx context.Context, retryableFunc func() (resp interface{}, err error)) (resp interface{}, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	r.score.Add(1)
 	doFunc := func() retryableFuncResp {
 		resp, err := retryableFunc()
 		return retryableFuncResp{resp: resp, err: err}
@@ -69,17 +76,22 @@ func (r *Retry) BackupRetry(ctx context.Context, retryableFunc func() (resp inte
 	go func() {
 		<-fastRetryJustNow
 		if ctx.Err() == nil {
+			if r.score.Load() < 0 {
+				// 重试配额消耗完毕
+				return
+			}
+			r.score.Add(-1 * r.oneRetryScore)
 			result <- doFunc()
 		}
 	}()
 	go func() {
 		// 快速重试消耗一次配额，所以这里从2开始
 		for i := 2; i <= r.RetryCnt; i++ {
+			if i > 2 {
+				r.Clock.Sleep(r.RetryWaitTime)
+			}
 			if ctx.Err() != nil {
 				break
-			}
-			if i > 2 {
-				r.Clock.Sleep(r.RetryWaitTime / 10)
 			}
 			result <- doFunc()
 			// 如果普通重试已经完毕，那么快速重试无需等待2s
