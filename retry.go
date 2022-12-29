@@ -2,8 +2,9 @@ package fast_retry
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
+
+	"go.uber.org/atomic"
 
 	"github.com/facebookgo/clock"
 )
