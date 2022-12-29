@@ -2,11 +2,15 @@ package fast_retry
 
 import (
 	"context"
-	"sync/atomic"
+	"errors"
 	"time"
+
+	"go.uber.org/atomic"
 
 	"github.com/facebookgo/clock"
 )
+
+var ErrRetryQuotaExceeded = errors.New("fast_retry:retry quota exceeded")
 
 type Clock interface {
 	Now() time.Time
@@ -78,6 +82,7 @@ func (r *Retry) BackupRetry(ctx context.Context, retryableFunc func() (resp inte
 		if ctx.Err() == nil {
 			if r.score.Load() < 0 {
 				// 重试配额消耗完毕
+				result <- retryableFuncResp{err: ErrRetryQuotaExceeded}
 				return
 			}
 			r.score.Add(-1 * r.oneRetryScore)
