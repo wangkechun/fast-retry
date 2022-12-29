@@ -3,11 +3,17 @@ package fast_retry
 import (
 	"context"
 	"errors"
+	"log"
 	"math/rand"
 	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"net/http"
+	_ "net/http/pprof"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -192,20 +198,64 @@ func BenchmarkRetry(b *testing.B) {
 	}
 }
 
-func TestMemLeak(t *testing.T) {
+func TestMemLeakSimple(t *testing.T) {
+	str := strings.Repeat("1234567890", 1024) // 10kb
+	ctx := context.Background()
+	r := New(Config{MaxRetryRate: 0.1, FastRetryTime: time.Second / 100})
+	for i := 0; i < 100000; i++ {
+		go func() {
+			r.BackupRetry(ctx, func() (resp interface{}, err error) {
+				time.Sleep(time.Second / 10)
+				if rand.Float64() < 0.1 {
+					return nil, errors.New("ok")
+				}
+				return str + "a", nil
+			})
+		}()
+		if i%100 == 0 {
+			t.Logf("i:%v", i)
+		}
+	}
+	time.Sleep(time.Second)
+	t.Logf("go:%v", runtime.NumGoroutine())
+	require.True(t, runtime.NumGoroutine() < 5)
+}
+
+func TestMemLeakFull(t *testing.T) {
 	if os.Getenv("TEST_LEAK") == "" {
 		t.Skip()
 	}
-	// TEST_LEAK=1 GODEBUG=gctrace=1 go test -run TestMemLeak
+	// TEST_LEAK=1 GODEBUG=gctrace=1 go test -run TestMemLeak -v
 	// 内存泄露测试，如果允许内存一直不变，则代表无内存泄露
 	// 如果把 m[i] = "ok" 注释回来，则可以模拟泄露的情况
+
+	go func() {
+		for {
+			time.Sleep(time.Second * 3)
+			t.Logf("num:%v", runtime.NumGoroutine())
+		}
+	}()
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
+	str := strings.Repeat("1234567890", 1024) // 10kb
 	ctx := context.Background()
 	r := New(Config{MaxRetryRate: 0.1, FastRetryTime: time.Second / 100})
 	// m := map[int]string{}
-	for i := 0; ; i++ {
+	for i := 0; i < 100000; i++ {
 		// m[i] = "ok"
-		r.BackupRetry(ctx, func() (resp interface{}, err error) {
-			return "ok", nil
-		})
+		go func() {
+			r.BackupRetry(ctx, func() (resp interface{}, err error) {
+				time.Sleep(time.Second)
+				if rand.Float64() < 0.1 {
+					return nil, errors.New("ok")
+				}
+				return str + "a", nil
+			})
+		}()
+		if i%100 == 0 {
+			t.Logf("i:%v", i)
+		}
 	}
+	time.Sleep(time.Hour)
 }
