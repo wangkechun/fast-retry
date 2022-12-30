@@ -23,17 +23,19 @@ type retryableFuncResp struct {
 }
 
 type Config struct {
-	FastRetryTime time.Duration // 默认 2s，建议设置成当前 API 的 PCT99
-	MaxRetryRate  float64       // 最大重试百分比，0.05 代表 5%，默认 5%，超出返回 ErrRetryQuotaExceeded
-	RetryCnt      int           // 最多发送的请求次数，默认 3 次，最少两次，其中一次是快速重试
-	RetryWaitTime time.Duration // 重试间隔，默认是 FastRetryTime / 10
-	Clock         Clock         // 模拟时钟，mock 用
+	FastRetryTime    time.Duration // 默认 2s，建议设置成当前 API 的 PCT99
+	MaxRetryRate     float64       // 最大重试百分比，0.05 代表 5%，默认 5%，超出返回 ErrRetryQuotaExceeded
+	RetryCnt         int           // 最多发送的请求次数，默认 3 次，最少两次，其中一次是快速重试
+	RetryWaitTime    time.Duration // 重试间隔，默认是 FastRetryTime / 10
+	Clock            Clock         // 模拟时钟，mock 用
+	MaxRetryCapacity int           // 平时没有超时的时候，允许积攒的重启请求最大数目，默认 1000 个
 }
 
 type Retry struct {
 	cfg           *Config
 	score         atomic.Int64
 	oneRetryScore int64
+	maxScore      int64
 }
 
 func New(config Config) *Retry {
@@ -60,13 +62,19 @@ func New(config Config) *Retry {
 		panic("bad MaxRetryRate")
 	}
 	r.oneRetryScore = int64(1 / r.cfg.MaxRetryRate)
+	if r.cfg.MaxRetryCapacity == 0 {
+		r.cfg.MaxRetryCapacity = 1000
+	}
+	r.maxScore = int64(r.cfg.MaxRetryCapacity) * r.oneRetryScore
 	return r
 }
 
 func (r *Retry) BackupRetry(ctx context.Context, retryableFunc func() (resp interface{}, err error)) (resp interface{}, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	r.score.Add(1)
+	if r.score.Load() < r.maxScore {
+		r.score.Add(1)
+	}
 	doFunc := func() retryableFuncResp {
 		resp, err := retryableFunc()
 		return retryableFuncResp{resp: resp, err: err}

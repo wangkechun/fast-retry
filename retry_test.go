@@ -3,6 +3,7 @@ package fast_retry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -186,6 +187,71 @@ func TestMaxRetryRate(t *testing.T) {
 	t.Logf("%v %v %v", callbackCnt.Load(), errorCnt.Load(), successCnt.Load())
 	require.Equal(t, errorCnt.Load(), int64(0))
 	require.True(t, callbackCnt.Load() < int64(float64(successCnt.Load())*1.2))
+}
+
+func TestMaxRetryCapacity(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	ctx := context.Background()
+	var callbackCnt atomic.Int64
+	var errorCnt atomic.Int64
+	var successCnt atomic.Int64
+	// 模拟 FastRetryTime 设置不当，看请求是否放大两次
+	maxRetryCapacity := 100
+	r := New(Config{MaxRetryRate: 0.1, FastRetryTime: time.Second / 15, MaxRetryCapacity: maxRetryCapacity})
+	slow := false
+	fn := func() (resp interface{}, err error) {
+		callbackCnt.Inc()
+		if slow {
+			time.Sleep(time.Second / 10)
+		}
+		return "ok", nil
+	}
+	{
+		g, ctx := errgroup.WithContext(ctx)
+		for i := 0; i < 100; i++ {
+			g.Go(func() error {
+				for j := 0; j < 100; j++ {
+					_, err := r.BackupRetry(ctx, fn)
+					if err != nil {
+						fmt.Println(err)
+						errorCnt.Inc()
+					} else {
+						successCnt.Inc()
+					}
+				}
+				return nil
+			})
+		}
+		_ = g.Wait()
+	}
+
+	slow = true
+	{
+		g, ctx := errgroup.WithContext(ctx)
+		for i := 0; i < 50; i++ {
+			g.Go(func() error {
+				for j := 0; j < 100; j++ {
+					_, err := r.BackupRetry(ctx, fn)
+					if err != nil {
+						fmt.Println(err)
+						errorCnt.Inc()
+					} else {
+						successCnt.Inc()
+					}
+				}
+				return nil
+			})
+		}
+		_ = g.Wait()
+	}
+	// 先 10000 个快速请求，然后 5000 个慢请求
+	// 5000 里面会有 10% 被重试，之前 10000 会积累一部分 quota
+	t.Logf("%v %v %v", callbackCnt.Load(), errorCnt.Load(), successCnt.Load())
+	require.Equal(t, errorCnt.Load(), int64(0))
+	require.True(t, callbackCnt.Load() < int64(float64(successCnt.Load())*1.2))
+	require.True(t, callbackCnt.Load() <= int64(10000+5000+5000*0.1+maxRetryCapacity*2))
 }
 
 func BenchmarkRetry(b *testing.B) {
