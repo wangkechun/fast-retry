@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"os"
@@ -337,4 +338,55 @@ type Line struct {
 	Type    string
 	UseTime float64
 	Err     bool
+}
+
+func TestRetryIf(t *testing.T) {
+	{
+		// 设置了 RetryIf， 重试一次
+		ctx := context.Background()
+		var n atomic.Int32
+		r := New(Config{RetryIf: func(err error) bool {
+			if err == io.EOF {
+				return false
+			}
+			return err != nil
+		}})
+		_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
+			n.Inc()
+			return "ok", io.EOF
+		})
+		require.Error(t, err, io.EOF)
+		require.Equal(t, int32(1), n.Load())
+	}
+	{
+		// 设置了 RetryIf， 但是非预期错误，重试 3 次
+		ctx := context.Background()
+		var n atomic.Int32
+		r := New(Config{RetryIf: func(err error) bool {
+			if err == io.EOF {
+				return false
+			}
+			return err != nil
+		}})
+		_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
+			n.Inc()
+			return "ok", errors.New("ok")
+		})
+		require.Error(t, err, errors.New("ok"))
+		require.Equal(t, int32(3), n.Load())
+	}
+	{
+		// 没有设置了 RetryIf， 重试 3 次
+		ctx := context.Background()
+		var n atomic.Int32
+		r := New(Config{RetryIf: func(err error) bool {
+			return err != nil
+		}})
+		_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
+			n.Inc()
+			return "ok", io.EOF
+		})
+		require.Error(t, err, io.EOF)
+		require.Equal(t, int32(3), n.Load())
+	}
 }
