@@ -129,6 +129,10 @@ func (r *Retry) BackupRetry(ctx context.Context, retryableFunc func() (resp inte
 			if i == 0 {
 				firstResp = re
 			}
+			// 如果有其它的错误，那么不返回 ErrRetryQuotaExceeded 给用户，造成困惑
+			if firstResp.err == ErrRetryQuotaExceeded {
+				firstResp = re
+			}
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}

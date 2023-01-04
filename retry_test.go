@@ -390,3 +390,44 @@ func TestRetryIf(t *testing.T) {
 		require.Equal(t, int32(3), n.Load())
 	}
 }
+
+func TestRetryQuota(t *testing.T) {
+	{
+		ctx := context.Background()
+		var n atomic.Int32
+		r := New(Config{FastRetryTime: time.Millisecond * 20, MaxRetryRate: 0.05})
+		{
+			_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
+				n.Inc()
+				time.Sleep(time.Millisecond * 30)
+				return "ok", nil
+			})
+			require.Nil(t, err)
+			require.Equal(t, r.score.Load(), int64(-19))
+			require.Equal(t, int32(2), n.Load())
+		}
+		// 此时 r.score 处于小于0的状态
+		// 如果 接下来的请求本身成功了，那么还是返回成功，只是 fast retry 没有 quota 自动失效
+		{
+			_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
+				n.Inc()
+				time.Sleep(time.Millisecond * 50)
+				return "ok", nil
+			})
+			require.Nil(t, err)
+			require.Equal(t, r.score.Load(), int64(-18))
+			require.Equal(t, int32(3), n.Load())
+		}
+		// 如果 接下来的请求本身失败了，那么返回真实的错误
+		{
+			_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
+				n.Inc()
+				time.Sleep(time.Millisecond * 50)
+				return "ok", io.EOF
+			})
+			require.Equal(t, r.score.Load(), int64(-17))
+			require.Equal(t, int32(5), n.Load())
+			require.Equal(t, err, io.EOF)
+		}
+	}
+}
