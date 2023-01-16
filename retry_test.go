@@ -395,7 +395,9 @@ func TestRetryQuota(t *testing.T) {
 	{
 		ctx := context.Background()
 		var n atomic.Int32
-		r := New(Config{FastRetryTime: time.Millisecond * 20, MaxRetryRate: 0.05})
+		r := New(Config{FastRetryTime: time.Millisecond * 20, MaxRetryRate: 0.05, RetryIf: func(err error) bool {
+			return err == io.EOF
+		}})
 		{
 			_, err := r.BackupRetry(ctx, func() (resp interface{}, err error) {
 				n.Inc()
