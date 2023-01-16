@@ -123,7 +123,7 @@ func (r *Retry) BackupRetry(ctx context.Context, retryableFunc func() (resp inte
 	for i := 0; i < r.cfg.RetryCnt; i++ {
 		select {
 		case re := <-result:
-			if !r.cfg.RetryIf(re.err) {
+			if re.err != ErrRetryQuotaExceeded && !r.cfg.RetryIf(re.err) {
 				return re.resp, re.err
 			}
 			if i == 0 {
